@@ -10,7 +10,7 @@ if os.path.exists(CSV):
 if not glob.glob(f"{DATA}/*.zip"):
     from kaggle.api.kaggle_api_extended import KaggleApi
     api = KaggleApi()
-    api.authenticate()   # usa KAGGLE_USERNAME / KAGGLE_KEY
+    api.authenticate()
     api.competition_download_file("nyc-taxi-trip-duration", "train.zip", path=DATA)
 
 for z in glob.glob(f"{DATA}/*.zip"):
