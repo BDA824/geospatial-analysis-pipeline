@@ -14,6 +14,7 @@ URI = os.environ.get("MONGO_URI", "mongodb://mongo:27017")
 
 def process_partition(df, uri):
     """Corre en un worker de Dask, una vez por partición."""
+    """Correr pipeline"""
     raw = len(df)
     docs = to_docs(clean_df(df))
     client = MongoClient(uri)
