@@ -1,0 +1,114 @@
+name: taxi   # nombre fijo del proyecto: Jenkins y tu terminal usan el mismo stack
+
+x-py: &py
+  build: .
+  image: taxi-py:latest
+  environment:
+    MONGO_URI: mongodb://mongo:27017
+
+services:
+  # ---------- Base de datos ----------
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes: [mongo_data:/data/db]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      retries: 10
+
+  # ---------- Spark: 1 master + workers (1 core, 1 GB c/u) ----------
+  spark-master:
+    build: {context: ., dockerfile: Dockerfile.spark}
+    image: taxi-spark:latest
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master --host spark-master
+    ports: ["8082:8080"]
+    volumes: [data:/data]
+
+  spark-worker:
+    image: taxi-spark:latest
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077 --cores 1 --memory 1g
+    depends_on: [spark-master]
+    volumes: [data:/data]
+
+  # Job de Spark (se ejecuta a demanda): docker compose run --rm spark-submit /app/spark_jobs/aggregations.py
+  spark-submit:
+    image: taxi-spark:latest
+    profiles: [tools]
+    entrypoint:
+      - /opt/spark/bin/spark-submit
+      - --master
+      - spark://spark-master:7077
+      - --packages
+      - org.mongodb.spark:mongo-spark-connector_2.12:10.3.0
+      - --conf
+      - spark.jars.ivy=/tmp/ivy
+      - --conf
+      - spark.executor.memory=1g
+      - --conf
+      - spark.sql.session.timeZone=UTC
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+    volumes: [data:/data]
+    depends_on: [spark-master, mongo]
+
+  # ---------- Dask: 1 scheduler + 2 workers (1 hilo, 1 GB c/u) ----------
+  dask-scheduler:
+    <<: *py
+    command: dask scheduler
+    ports: ["8787:8787"]
+
+  dask-worker:
+    <<: *py
+    command: dask worker tcp://dask-scheduler:8786 --nthreads 1 --memory-limit 1GB
+    depends_on: [dask-scheduler]
+    volumes: [data:/data]
+    deploy:
+      replicas: 2
+
+  # ---------- Jobs a demanda (descarga, ingesta, benchmark) ----------
+  download:
+    <<: *py
+    profiles: [tools]
+    command: python etl_process/extract.py
+    environment: [KAGGLE_USERNAME, KAGGLE_KEY]
+    volumes: [data:/data]
+
+  ingest:
+    <<: *py
+    profiles: [tools]
+    command: python -m etl_process.load
+    volumes: [data:/data]
+    depends_on:
+      mongo: {condition: service_healthy}
+      dask-scheduler: {condition: service_started}
+
+  bench:
+    <<: *py
+    profiles: [tools]
+    command: python bench/dask_grid.py
+    volumes: [data:/data]
+
+  # ---------- API Flask ----------
+  api:
+    <<: *py
+    command: gunicorn -b 0.0.0.0:5000 app.api:app
+    ports: ["${API_PORT:-5000}:5000"]
+    depends_on:
+      mongo: {condition: service_healthy}
+
+  # ---------- CI/CD ----------
+  jenkins:
+    build: {context: ., dockerfile: Dockerfile.jenkins}
+    image: taxi-jenkins:latest
+    user: root                      # necesita acceso al socket de Docker
+    ports: ["8081:8080"]
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  mongo_data:
+  data:
+  jenkins_home:

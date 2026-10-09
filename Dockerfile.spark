@@ -1,0 +1,5 @@
+FROM apache/spark:3.5.1-python3
+USER root
+COPY spark_jobs /app/spark_jobs
+RUN chmod -R a+rX /app
+USER spark

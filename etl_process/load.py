@@ -4,7 +4,7 @@ import dask.dataframe as dd
 import pandas as pd
 from dask.distributed import Client
 from pymongo import MongoClient, GEOSPHERE
-from ingest.clean import clean_df, to_docs
+from etl_process.transform import clean_df, to_docs
 
 CSV = "/data/train.csv"
 DB, COLL = "taxi", "trips"
